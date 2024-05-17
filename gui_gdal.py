@@ -9,15 +9,16 @@ import numpy as np
 import matplotlib.patches as patches
 from osgeo import gdal
 import pyproj
-
 import random
 import time
-import pynmea2
-import threading
+
+# Set up the transformation from WGS84 to Lambert93
+wgs84 = pyproj.CRS("EPSG:4326")
+lambert93 = pyproj.CRS("EPSG:2154")
+transformer_to_lambert93 = pyproj.Transformer.from_crs(wgs84, lambert93)
+transformer_to_wgs84 = pyproj.Transformer.from_crs(lambert93, wgs84)
 
 def generate_random_gpgga():
-    # base_lat = (48.417049 +  48.42250895101063)/2
-    # base_lon = (-4.462341 +  -4.479125888965847)/2
     base_lat = 48.418303
     base_lon = -4.472370
 
@@ -66,6 +67,8 @@ baud_rate = 4800
 # Lists to hold latitude and longitude values
 latitudes = []
 longitudes = []
+x_coords = []
+y_coords = []
 
 # Function to read NMEA sentences from the serial port
 def read_nmea():
@@ -128,6 +131,9 @@ def update_interface(msg):
         if lat and lon:
             latitudes.append(float(lat))
             longitudes.append(float(lon))
+            x, y = transformer_to_lambert93.transform(lat, lon)
+            x_coords.append(x)
+            y_coords.append(y)
             update_plot()
 
     elif isinstance(msg, pynmea2.types.talker.RMC):
@@ -154,15 +160,6 @@ def update_interface(msg):
         gsv_vars['num_sv'].set(num_sv)
         gsv_vars['sv_prns'].set(sv_prns)
 
-# Set up the transformation from Lambert93 to WGS84
-lambert93 = pyproj.CRS("EPSG:2154")
-wgs84 = pyproj.CRS("EPSG:4326")
-transformer = pyproj.Transformer.from_crs(lambert93, wgs84)
-
-def lambert93_to_wgs84(x, y):
-    lat, lon = transformer.transform(x, y)
-    return lat, lon
-
 # Load the background image using GDAL and convert its coordinates
 im = gdal.Open('ensta_2015.jpg')
 
@@ -188,10 +185,10 @@ top_left_y = geotransform[3]
 bottom_right_x = top_left_x + nx * geotransform[1] + ny * geotransform[2]
 bottom_right_y = top_left_y + nx * geotransform[4] + ny * geotransform[5]
 
-top_left_lat, top_left_lon = lambert93_to_wgs84(top_left_x, top_left_y)
-bottom_right_lat, bottom_right_lon = lambert93_to_wgs84(bottom_right_x, bottom_right_y)
+top_left_lat, top_left_lon = transformer_to_wgs84.transform(top_left_x, top_left_y)
+bottom_right_lat, bottom_right_lon = transformer_to_wgs84.transform(bottom_right_x, bottom_right_y)
 
-print(top_left_lat,top_left_lon,bottom_right_lat,bottom_right_lon)
+print(top_left_lat, top_left_lon, bottom_right_lat, bottom_right_lon)
 
 # Update the plot function to use the converted coordinates
 def update_plot():
@@ -200,11 +197,11 @@ def update_plot():
         lon_mean = np.mean(longitudes)
         lat_std = np.std(latitudes)
         lon_std = np.std(longitudes)
-        
+
         # Conversion factors
         meters_per_degree_lat = 111139  # Approximate meters per degree latitude
         meters_per_degree_lon = 111139 * np.cos(np.radians(lat_mean))  # Approximate meters per degree longitude at the mean latitude
-        
+
         # Convert standard deviation to meters
         lat_std_meters = lat_std * meters_per_degree_lat
         lon_std_meters = lon_std * meters_per_degree_lon
@@ -213,56 +210,43 @@ def update_plot():
         global_std = np.sqrt(lat_std_meters**2 + lon_std_meters**2)
 
         ax.clear()
-        
+
         # Plot the background image
-        ax.imshow(image, extent=[top_left_lon, bottom_right_lon, bottom_right_lat, top_left_lat], aspect='auto')
-        
-        ax.scatter(longitudes, latitudes, label='Positions')
-        ax.scatter(lon_mean, lat_mean, color='red', label='Position Moyenne')
-        
+        ax.imshow(image, extent=[top_left_x, bottom_right_x, bottom_right_y, top_left_y], aspect='auto')
+
+        ax.scatter(x_coords, y_coords, label='Positions')
+        x_mean, y_mean = transformer_to_lambert93.transform(lat_mean, lon_mean)
+        ax.scatter(x_mean, y_mean, color='red', label='Position Moyenne')
+
         # Draw circle representing global standard deviation
-        circle = patches.Circle((lon_mean, lat_mean), global_std / meters_per_degree_lat,
-                                edgecolor='red', facecolor='none', label='Cercle Écart-Type Global')
+        circle = patches.Circle((x_mean, y_mean), global_std, edgecolor='red', facecolor='none', label='Cercle Écart-Type Global')
         ax.add_patch(circle)
-        
+
         # Mark the last position in green
-        ax.scatter(longitudes[-1], latitudes[-1], color='green', label='Dernière Position')
-        
+        ax.scatter(x_coords[-1], y_coords[-1], color='green', label='Dernière Position')
+
         # Determine the limits of the plot
-        # min_lon = min(min(longitudes), top_left_lon)
-        # max_lon = max(max(longitudes), bottom_right_lon)
-        # min_lat = min(min(latitudes), bottom_right_lat)
-        # max_lat = max(max(latitudes), top_left_lat)
-        
-        min_lon = min(longitudes)
-        max_lon = max(longitudes)
-        min_lat = min(latitudes)
-        max_lat = max(latitudes)
+        min_x = min(x_coords)
+        max_x = max(x_coords)
+        min_y = min(y_coords)
+        max_y = max(y_coords)
 
-        # min_lon = -4.473186
-        # max_lon = -4.471729
-        # min_lat = 48.417912
-        # max_lat = 48.418734
+        ax.set_xlim(min_x - 20, max_x + 20)
+        ax.set_ylim(min_y - 20, max_y + 20)
 
-
-        ax.set_xlim(min_lon - 0.0001, max_lon + 0.0001)
-        ax.set_ylim(min_lat - 0.0001, max_lat + 0.0001)
-        
-        ax.set_xlabel('Longitude')
-        ax.set_ylabel('Latitude')
+        ax.set_xlabel('X (Lambert93)')
+        ax.set_ylabel('Y (Lambert93)')
         ax.set_title('Graphique de Position')
         ax.legend()
-        
+
         # Ensure the same scale on both axes
         ax.set_aspect('equal', adjustable='datalim')
-        
+
         plot_canvas.draw()
-        
+
         std_var.set(f"Écart-Type: {lat_std_meters:.2f} m (Latitude), {lon_std_meters:.2f} m (Longitude), {global_std:.2f} m (Global)\n"
                     f"Moyenne: {lat_mean:.6f}° (Latitude), {lon_mean:.6f}° (Longitude)")
 
-       
-        
 # Function to start the thread for reading NMEA sentences
 def start_reading():
     thread = threading.Thread(target=read_nmea, daemon=True)
