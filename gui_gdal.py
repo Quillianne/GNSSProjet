@@ -8,6 +8,56 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import numpy as np
 import matplotlib.patches as patches
 from osgeo import gdal
+import pyproj
+
+import random
+import time
+import pynmea2
+import threading
+
+def generate_random_gpgga():
+    # base_lat = (48.417049 +  48.42250895101063)/2
+    # base_lon = (-4.462341 +  -4.479125888965847)/2
+    base_lat = 48.418303
+    base_lon = -4.472370
+
+    def generate_coordinate(base, offset):
+        return base + random.uniform(-offset, offset)
+
+    def format_lat_lon(value, is_latitude=True):
+        degrees = int(value)
+        minutes = (value - degrees) * 60
+        direction = 'N' if degrees >= 0 else 'S' if is_latitude else 'E' if degrees >= 0 else 'W'
+        return f"{abs(degrees):02d}{abs(minutes):07.4f}", direction
+
+    def calculate_checksum(nmea_str):
+        checksum = 0
+        for char in nmea_str:
+            checksum ^= ord(char)
+        return f"{checksum:02X}"
+
+    def generate_gpgga_sentence():
+        lat, lat_dir = format_lat_lon(generate_coordinate(base_lat, 0.00001), is_latitude=True)
+        lon, lon_dir = format_lat_lon(generate_coordinate(base_lon, 0.00001), is_latitude=False)
+        time_str = time.strftime("%H%M%S.00", time.gmtime())
+        gpgga = f"GPGGA,{time_str},{lat},{lat_dir},{lon},{lon_dir},1,08,0.9,545.4,M,46.9,M,,"
+        checksum = calculate_checksum(gpgga)
+        return f"${gpgga}*{checksum}"
+
+    return generate_gpgga_sentence()
+
+def fake_feed():
+    while True:
+        sentence = generate_random_gpgga()
+        print(sentence)
+        try:
+            msg = pynmea2.parse(sentence)
+            update_interface(msg)
+        except pynmea2.nmea.ParseError as e:
+            print(f"Parse error: {e}")
+        except AttributeError as e:
+            print(f"Attribute error: {e}")
+        time.sleep(1)
 
 # Serial port configuration
 serial_port = 'COM3'
@@ -104,7 +154,46 @@ def update_interface(msg):
         gsv_vars['num_sv'].set(num_sv)
         gsv_vars['sv_prns'].set(sv_prns)
 
-# Function to update the plot
+# Set up the transformation from Lambert93 to WGS84
+lambert93 = pyproj.CRS("EPSG:2154")
+wgs84 = pyproj.CRS("EPSG:4326")
+transformer = pyproj.Transformer.from_crs(lambert93, wgs84)
+
+def lambert93_to_wgs84(x, y):
+    lat, lon = transformer.transform(x, y)
+    return lat, lon
+
+# Load the background image using GDAL and convert its coordinates
+im = gdal.Open('ensta_2015.jpg')
+
+geotransform = im.GetGeoTransform()
+
+# Get image dimensions
+nx = im.RasterXSize
+ny = im.RasterYSize
+nb = im.RasterCount
+
+# Initialize the image array
+image = np.zeros((ny, nx, nb), dtype=np.float32)
+
+# Read each band into the image array and normalize to [0, 1]
+image[:, :, 0] = im.GetRasterBand(1).ReadAsArray() / 255.0
+image[:, :, 1] = im.GetRasterBand(2).ReadAsArray() / 255.0
+image[:, :, 2] = im.GetRasterBand(3).ReadAsArray() / 255.0
+
+# Example conversion of image corners from Lambert93 to WGS84
+# Assuming the image covers a certain area in Lambert93 coordinates
+top_left_x = geotransform[0]
+top_left_y = geotransform[3]
+bottom_right_x = top_left_x + nx * geotransform[1] + ny * geotransform[2]
+bottom_right_y = top_left_y + nx * geotransform[4] + ny * geotransform[5]
+
+top_left_lat, top_left_lon = lambert93_to_wgs84(top_left_x, top_left_y)
+bottom_right_lat, bottom_right_lon = lambert93_to_wgs84(bottom_right_x, bottom_right_y)
+
+print(top_left_lat,top_left_lon,bottom_right_lat,bottom_right_lon)
+
+# Update the plot function to use the converted coordinates
 def update_plot():
     if len(latitudes) > 1:
         lat_mean = np.mean(latitudes)
@@ -126,7 +215,7 @@ def update_plot():
         ax.clear()
         
         # Plot the background image
-        ax.imshow(image, extent=[0, nx, 0, ny], aspect='auto')
+        ax.imshow(image, extent=[top_left_lon, bottom_right_lon, bottom_right_lat, top_left_lat], aspect='auto')
         
         ax.scatter(longitudes, latitudes, label='Positions')
         ax.scatter(lon_mean, lat_mean, color='red', label='Position Moyenne')
@@ -138,6 +227,26 @@ def update_plot():
         
         # Mark the last position in green
         ax.scatter(longitudes[-1], latitudes[-1], color='green', label='Dernière Position')
+        
+        # Determine the limits of the plot
+        # min_lon = min(min(longitudes), top_left_lon)
+        # max_lon = max(max(longitudes), bottom_right_lon)
+        # min_lat = min(min(latitudes), bottom_right_lat)
+        # max_lat = max(max(latitudes), top_left_lat)
+        
+        min_lon = min(longitudes)
+        max_lon = max(longitudes)
+        min_lat = min(latitudes)
+        max_lat = max(latitudes)
+
+        # min_lon = -4.473186
+        # max_lon = -4.471729
+        # min_lat = 48.417912
+        # max_lat = 48.418734
+
+
+        ax.set_xlim(min_lon - 0.0001, max_lon + 0.0001)
+        ax.set_ylim(min_lat - 0.0001, max_lat + 0.0001)
         
         ax.set_xlabel('Longitude')
         ax.set_ylabel('Latitude')
@@ -152,25 +261,12 @@ def update_plot():
         std_var.set(f"Écart-Type: {lat_std_meters:.2f} m (Latitude), {lon_std_meters:.2f} m (Longitude), {global_std:.2f} m (Global)\n"
                     f"Moyenne: {lat_mean:.6f}° (Latitude), {lon_mean:.6f}° (Longitude)")
 
-# Load the background image using GDAL
-im = gdal.Open('ensta_2015.jpg')
-
-# Get image dimensions
-nx = im.RasterXSize
-ny = im.RasterYSize
-nb = im.RasterCount
-
-# Initialize the image array
-image = np.zeros((ny, nx, nb), dtype=np.float32)
-
-# Read each band into the image array and normalize to [0, 1]
-image[:, :, 0] = im.GetRasterBand(1).ReadAsArray() / 255.0
-image[:, :, 1] = im.GetRasterBand(2).ReadAsArray() / 255.0
-image[:, :, 2] = im.GetRasterBand(3).ReadAsArray() / 255.0
-
+       
+        
 # Function to start the thread for reading NMEA sentences
 def start_reading():
     thread = threading.Thread(target=read_nmea, daemon=True)
+    #thread = threading.Thread(target=fake_feed, daemon=True)
     thread.start()
 
 # Setting up the main application window
