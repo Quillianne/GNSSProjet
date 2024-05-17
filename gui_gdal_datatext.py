@@ -77,6 +77,28 @@ longitudes = []
 x_coords = []
 y_coords = []
 
+
+# Function to read NMEA sentences from the file
+def read_nmea_from_file():
+    try:
+        with open('data_uv24.nmea.txt', 'r') as file:
+            while True:
+                line = file.readline()
+                if not line:
+                    break
+                if line.startswith('$'):
+                    try:
+                        msg = pynmea2.parse(line)
+                        print(msg)
+                        update_interface(msg)
+                    except pynmea2.nmea.ParseError as e:
+                        print(f"Parse error: {e}")
+                    except AttributeError as e:
+                        print(f"Attribute error: {e}")
+                time.sleep(0.00001)  # Sleep for 0.1 milliseconds
+    except IOError as e:
+        print(f"File error: {e}")
+
 # Function to read NMEA sentences from the serial port
 def read_nmea():
     try:
@@ -266,13 +288,14 @@ def update_plot():
                     f"Moyenne: {lat_mean:.6f}° (Latitude), {lon_mean:.6f}° (Longitude)")
 
         # Update the link label
-        link_label.config(text=f"Open mean coordinates in google")
+        link_label.config(text=f"Open mean coordinates in google maps")
         link_label.bind("<Button-1>", lambda x: open_link(f"https://maps.google.com?q={lat_mean:.6f},{lon_mean:.6f}"))
 
 
 # Function to start the thread for reading NMEA sentences
 def start_reading():
-    thread = threading.Thread(target=read_nmea, daemon=True)
+    #thread = threading.Thread(target=read_nmea, daemon=True)
+    thread = threading.Thread(target=read_nmea_from_file, daemon=True)
     #thread = threading.Thread(target=fake_feed, daemon=True)
     thread.start()
 
