@@ -11,12 +11,19 @@ from osgeo import gdal
 import pyproj
 import random
 import time
+import webbrowser
+
 
 # Set up the transformation from WGS84 to Lambert93
 wgs84 = pyproj.CRS("EPSG:4326")
 lambert93 = pyproj.CRS("EPSG:2154")
 transformer_to_lambert93 = pyproj.Transformer.from_crs(wgs84, lambert93)
 transformer_to_wgs84 = pyproj.Transformer.from_crs(lambert93, wgs84)
+
+
+# Function to open the link in a web browser
+def open_link(url):
+    webbrowser.open_new(url)
 
 def generate_random_gpgga():
     base_lat = 48.418303
@@ -195,19 +202,27 @@ def update_plot():
     if len(latitudes) > 1:
         lat_mean = np.mean(latitudes)
         lon_mean = np.mean(longitudes)
-        lat_std = np.std(latitudes)
-        lon_std = np.std(longitudes)
 
-        # Conversion factors
-        meters_per_degree_lat = 111139  # Approximate meters per degree latitude
-        meters_per_degree_lon = 111139 * np.cos(np.radians(lat_mean))  # Approximate meters per degree longitude at the mean latitude
+        # Convert latitude and longitude to Lambert93
+        coords = np.array([transformer_to_lambert93.transform(lat, lon) for lat, lon in zip(latitudes, longitudes)])
+        x_coords, y_coords = coords[:, 0], coords[:, 1]
 
-        # Convert standard deviation to meters
-        lat_std_meters = lat_std * meters_per_degree_lat
-        lon_std_meters = lon_std * meters_per_degree_lon
+        # Compute the covariance matrix
+        cov = np.cov(x_coords, y_coords)
+        
+        # Compute the eigenvalues and eigenvectors
+        eigenvalues, eigenvectors = np.linalg.eigh(cov)
+        
+        # Sort the eigenvalues and eigenvectors
+        order = eigenvalues.argsort()[::-1]
+        eigenvalues = eigenvalues[order]
+        eigenvectors = eigenvectors[:, order]
 
-        # Calculate global standard deviation
-        global_std = np.sqrt(lat_std_meters**2 + lon_std_meters**2)
+        # Calculate the angle of the ellipse
+        angle = np.degrees(np.arctan2(*eigenvectors[:, 0][::-1]))
+
+        # Standard deviation corresponds to the square root of eigenvalues
+        std_dev_x, std_dev_y = np.sqrt(eigenvalues)
 
         ax.clear()
 
@@ -218,9 +233,10 @@ def update_plot():
         x_mean, y_mean = transformer_to_lambert93.transform(lat_mean, lon_mean)
         ax.scatter(x_mean, y_mean, color='red', label='Position Moyenne')
 
-        # Draw circle representing global standard deviation
-        circle = patches.Circle((x_mean, y_mean), global_std, edgecolor='red', facecolor='none', label='Cercle Écart-Type Global')
-        ax.add_patch(circle)
+        # Draw ellipse representing global standard deviation
+        ellipse = patches.Ellipse((x_mean, y_mean), width=2*std_dev_x, height=2*std_dev_y, angle=angle, 
+                                  edgecolor='red', facecolor='none', label='Ellipse Écart-Type Global')
+        ax.add_patch(ellipse)
 
         # Mark the last position in green
         ax.scatter(x_coords[-1], y_coords[-1], color='green', label='Dernière Position')
@@ -231,8 +247,10 @@ def update_plot():
         min_y = min(y_coords)
         max_y = max(y_coords)
 
-        ax.set_xlim(min_x - 20, max_x + 20)
-        ax.set_ylim(min_y - 20, max_y + 20)
+        zoom = 20
+
+        ax.set_xlim(min_x - zoom, max_x + zoom)
+        ax.set_ylim(min_y - zoom, max_y + zoom)
 
         ax.set_xlabel('X (Lambert93)')
         ax.set_ylabel('Y (Lambert93)')
@@ -244,8 +262,13 @@ def update_plot():
 
         plot_canvas.draw()
 
-        std_var.set(f"Écart-Type: {lat_std_meters:.2f} m (Latitude), {lon_std_meters:.2f} m (Longitude), {global_std:.2f} m (Global)\n"
+        std_var.set(f"Écart-Type: {std_dev_x:.2f} m (X), {std_dev_y:.2f} m (Y), {np.sqrt(std_dev_y**2+std_dev_x**2):.2f} m (global)\n"
                     f"Moyenne: {lat_mean:.6f}° (Latitude), {lon_mean:.6f}° (Longitude)")
+
+        # Update the link label
+        link_label.config(text=f"Open mean coordinates in google maps")
+        link_label.bind("<Button-1>", lambda x: open_link(f"https://maps.google.com?q={lat_mean:.6f},{lon_mean:.6f}"))
+
 
 # Function to start the thread for reading NMEA sentences
 def start_reading():
@@ -315,12 +338,15 @@ for idx, (key, var) in enumerate(gsv_vars.items()):
     ttk.Label(root, textvariable=var).grid(column=1, row=len(gga_vars) + len(rmc_vars) + len(gsa_vars) + 4 + idx, sticky=tk.W)
     ttk.Label(root, text=explanations[key]).grid(column=2, row=len(gga_vars) + len(rmc_vars) + len(gsa_vars) + 4 + idx, sticky=tk.W)
 
-# Plotting area
+# Plotting area and link label
 fig, ax = plt.subplots(figsize=(5, 4))
 plot_canvas = FigureCanvasTkAgg(fig, master=root)
 plot_canvas.get_tk_widget().grid(column=0, row=len(gga_vars) + len(rmc_vars) + len(gsa_vars) + len(gsv_vars) + 4, columnspan=3)
 
 ttk.Label(root, textvariable=std_var).grid(column=0, row=len(gga_vars) + len(rmc_vars) + len(gsa_vars) + len(gsv_vars) + 5, columnspan=3)
+
+link_label = tk.Label(root, text="", fg="blue", cursor="hand2")
+link_label.grid(column=0, row=len(gga_vars) + len(rmc_vars) + len(gsa_vars) + len(gsv_vars) + 6, columnspan=3)
 
 # Start the NMEA reading in a separate thread
 start_reading()
