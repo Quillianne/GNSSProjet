@@ -12,6 +12,7 @@ import pyproj
 import random
 import time
 import webbrowser
+from mpl_toolkits.mplot3d import Axes3D
 
 
 # Set up the transformation from WGS84 to Lambert93
@@ -19,7 +20,6 @@ wgs84 = pyproj.CRS("EPSG:4326")
 lambert93 = pyproj.CRS("EPSG:2154")
 transformer_to_lambert93 = pyproj.Transformer.from_crs(wgs84, lambert93)
 transformer_to_wgs84 = pyproj.Transformer.from_crs(lambert93, wgs84)
-
 
 # Function to open the link in a web browser
 def open_link(url):
@@ -68,7 +68,7 @@ def fake_feed():
         time.sleep(1)
 
 # Serial port configuration
-serial_port = 'COM3'
+serial_port = 'COM4'
 baud_rate = 4800
 
 # Lists to hold latitude and longitude values
@@ -76,6 +76,13 @@ latitudes = []
 longitudes = []
 x_coords = []
 y_coords = []
+
+# Variables to hold satellite data
+satellite_data = []
+
+# Variables to hold partial GSV messages
+gsv_messages = []
+expected_gsv_messages = 0
 
 # Function to read NMEA sentences from the serial port
 def read_nmea():
@@ -86,7 +93,7 @@ def read_nmea():
                 if line.startswith('$'):
                     try:
                         msg = pynmea2.parse(line)
-                        print(msg)
+                        #print(msg)
                         update_interface(msg)
                     except pynmea2.nmea.ParseError as e:
                         print(f"Parse error: {e}")
@@ -162,10 +169,51 @@ def update_interface(msg):
         gsa_vars['hdop'].set(f"{hdop} ({get_dop_quality(hdop)})" if hdop != 'N/A' else 'N/A')
         gsa_vars['vdop'].set(f"{vdop} ({get_dop_quality(vdop)})" if vdop != 'N/A' else 'N/A')
     elif isinstance(msg, pynmea2.types.talker.GSV):
-        num_sv = msg.data[2]  # Number of satellites in view
-        sv_prns = ', '.join([msg.data[i] for i in range(4, len(msg.data), 4)])  # Satellite PRNs
-        gsv_vars['num_sv'].set(num_sv)
+        handle_gsv_message(msg)
+
+def handle_gsv_message(msg):
+    global gsv_messages, expected_gsv_messages
+    
+    # Append the message to the list of GSV messages
+    gsv_messages.append(msg)
+
+    # If this is the first message in the sequence, set the expected number of messages
+    if int(msg.msg_num) == 1:
+        print("--- GSV ---")
+        expected_gsv_messages = int(msg.num_messages)
+    
+    print(f"({len(gsv_messages)}/{expected_gsv_messages}) | {msg}") 
+
+    # If we have collected all the messages in the sequence, process them
+    if len(gsv_messages) == expected_gsv_messages:
+        # Clear the previous satellite data
+        satellite_data.clear()
+        
+        # Collect satellite data from all GSV messages
+        for gsv_msg in gsv_messages:
+            for i in range(3, len(gsv_msg.data), 4):
+                prn = gsv_msg.data[i]
+                elevation = gsv_msg.data[i + 1]
+                azimuth = gsv_msg.data[i + 2]
+                snr = gsv_msg.data[i + 3] if i + 3 < len(gsv_msg.data) else 'N/A'
+                satellite_data.append((prn, elevation, azimuth, snr))
+        
+        # Update the GSV variables if num_sv is present
+        if hasattr(gsv_messages[0], 'num_sv'):
+            gsv_vars['num_sv'].set(gsv_messages[0].num_sv)
+        sv_prns = ', '.join([sat[0] for sat in satellite_data])
         gsv_vars['sv_prns'].set(sv_prns)
+        
+        # Update the satellite plot
+        update_satellite_plot()
+        
+        # Clear the GSV messages for the next sequence
+        gsv_messages = []
+
+        # Print the list of PRNs for debugging purposes
+        #print("PRNs of visible satellites:", [sat[0] for sat in satellite_data])
+
+
 
 # Load the background image using GDAL and convert its coordinates
 im = gdal.Open('ensta_2015.jpg')
@@ -270,6 +318,32 @@ def update_plot():
         link_label.bind("<Button-1>", lambda x: open_link(f"https://maps.google.com?q={lat_mean:.6f},{lon_mean:.6f}"))
 
 
+
+def update_satellite_plot():
+    ax_sat.clear()
+    
+    for sat in satellite_data:
+        prn, elevation, azimuth, snr = sat
+        if elevation and azimuth:
+            elevation = float(elevation)
+            azimuth = float(azimuth)
+            ax_sat.scatter(np.radians(azimuth), 90 - elevation, label=f"PRN: {prn}, SNR: {snr}")
+    
+    ax_sat.set_theta_zero_location('N')  # 0° au nord
+    ax_sat.set_theta_direction(-1)  # Sens horaire
+    
+    ax_sat.set_ylim(0, 90)
+    ax_sat.set_yticks(range(0, 91, 15))
+    ax_sat.set_yticklabels(map(str, range(90, -1, -15)))
+    ax_sat.set_title("Trajectoire des Satellites")
+    
+    # Supprimer ou masquer la légende
+    # ax_sat.legend(loc='upper right')
+    ax_sat.legend().set_visible(False)
+    
+    satellite_canvas.draw()
+
+
 # Function to start the thread for reading NMEA sentences
 def start_reading():
     thread = threading.Thread(target=read_nmea, daemon=True)
@@ -338,10 +412,14 @@ for idx, (key, var) in enumerate(gsv_vars.items()):
     ttk.Label(root, textvariable=var).grid(column=1, row=len(gga_vars) + len(rmc_vars) + len(gsa_vars) + 4 + idx, sticky=tk.W)
     ttk.Label(root, text=explanations[key]).grid(column=2, row=len(gga_vars) + len(rmc_vars) + len(gsa_vars) + 4 + idx, sticky=tk.W)
 
-# Plotting area and link label
+# Plotting area for positions and satellite trajectories
 fig, ax = plt.subplots(figsize=(5, 4))
 plot_canvas = FigureCanvasTkAgg(fig, master=root)
 plot_canvas.get_tk_widget().grid(column=0, row=len(gga_vars) + len(rmc_vars) + len(gsa_vars) + len(gsv_vars) + 4, columnspan=3)
+
+fig_sat, ax_sat = plt.subplots(subplot_kw={'projection': 'polar'}, figsize=(5, 4))
+satellite_canvas = FigureCanvasTkAgg(fig_sat, master=root)
+satellite_canvas.get_tk_widget().grid(column=3, row=0, rowspan=len(gga_vars) + len(rmc_vars) + len(gsa_vars) + len(gsv_vars) + 4)
 
 ttk.Label(root, textvariable=std_var).grid(column=0, row=len(gga_vars) + len(rmc_vars) + len(gsa_vars) + len(gsv_vars) + 5, columnspan=3)
 
