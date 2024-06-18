@@ -294,7 +294,7 @@ class NMEAGUI:
             if self.mode == "statique":
                 lat_mean = np.mean(self.latitudes)
                 lon_mean = np.mean(self.longitudes)
-
+                #print(len(self.latitudes))
                 # Compute the covariance matrix
                 cov = np.cov(self.x_coords, self.y_coords)
 
@@ -320,9 +320,12 @@ class NMEAGUI:
                 ellipse = patches.Ellipse((x_mean, y_mean), width=2*std_dev_x, height=2*std_dev_y, angle=angle,
                                           edgecolor='red', facecolor='none', label='Ellipse Écart-Type Global')
                 self.ax.add_patch(ellipse)
-
-                self.std_var.set(f"Écart-Type: {std_dev_x:.2f} m (X), {std_dev_y:.2f} m (Y), {np.sqrt(std_dev_y**2 + std_dev_x**2):.2f} m (global)\n"
-                                 f"Moyenne: {lat_mean:.6f}° (Latitude), {lon_mean:.6f}° (Longitude)")
+                if np.sqrt(std_dev_y**2 + std_dev_x**2)*100 < 5:
+                    self.std_var.set(f"Écart-Type: {std_dev_x*100:.2f} cm (X), {std_dev_y*100:.2f} cm (Y), {np.sqrt(std_dev_y**2 + std_dev_x**2)*100:.2f} cm (global)\n"
+                                    f"Moyenne: {lat_mean:.6f}° (Latitude), {lon_mean:.6f}° (Longitude)")
+                else:
+                    self.std_var.set(f"Écart-Type: {std_dev_x:.2f} m (X), {std_dev_y:.2f} m (Y), {np.sqrt(std_dev_y**2 + std_dev_x**2):.2f} m (global)\n"
+                                    f"Moyenne: {lat_mean:.6f}° (Latitude), {lon_mean:.6f}° (Longitude)")
 
                 # Update the link label
                 self.link_label.config(text=f"Open mean coordinates in google")
