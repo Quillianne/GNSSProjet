@@ -9,7 +9,7 @@ import numpy as np
 import matplotlib.patches as patches
 
 # Serial port configuration
-serial_port = 'COM3'
+serial_port = 'COM4'
 baud_rate = 4800
 
 # Lists to hold latitude and longitude values
