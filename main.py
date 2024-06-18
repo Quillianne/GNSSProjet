@@ -453,29 +453,21 @@ class SELECTGUI:
         self.gnss_types = {'GP': tk.BooleanVar(), 'GL': tk.BooleanVar(), 'GA': tk.BooleanVar(), 'GB': tk.BooleanVar(), 'GI': tk.BooleanVar(), 'GS': tk.BooleanVar()}
         self.app.minsize(400, 300)
         self.app.title("Choix de la source des données")
-        self.show_static_dynamic_menu()
+        self.show_menu()
 
     def show_static_dynamic_menu(self):
         for widget in self.app.winfo_children():
             widget.destroy()
 
-        static_button = tk.Button(self.app, text="Statique", command=lambda: self.set_mode("statique"))
-        static_button.pack(pady=10)
 
-        dynamic_button = tk.Button(self.app, text="En Déplacement", command=lambda: self.set_mode("dynamique"))
-        dynamic_button.pack(pady=10)
-        gnss_frame = tk.Frame(self.app)
-        gnss_frame.pack(pady=10)
-
-        for gnss, var in self.gnss_types.items():
-            tk.Checkbutton(gnss_frame, text=gnss, variable=var).pack(side=tk.LEFT)
 
 
     def set_mode(self, selected_mode):
         self.mode = selected_mode
-        self.show_file_or_sensor_menu()
+        self.mode_label.config(text=f"Mode sélectionné: {selected_mode}")
+        #self.show_file_or_sensor_menu()
 
-    def show_file_or_sensor_menu(self):
+    def show_menu(self):
         for widget in self.app.winfo_children():
             widget.destroy()
 
@@ -488,14 +480,29 @@ class SELECTGUI:
         sensor_button = tk.Button(frame, text="Lire depuis un capteur", command=self.list_ports)
         sensor_button.pack(side=tk.LEFT, padx=10)
 
+        static_button = tk.Button(self.app, text="Statique", command=lambda: self.set_mode("statique"))
+        static_button.pack(pady=10)
+
+        dynamic_button = tk.Button(self.app, text="En Déplacement", command=lambda: self.set_mode("dynamique"))
+        dynamic_button.pack(pady=10)
+
         self.file_label = tk.Label(self.app, text="")
         self.file_label.pack(pady=10)
 
         self.port_label = tk.Label(self.app, text="")
         self.port_label.pack(pady=10)
 
+        self.mode_label = tk.Label(self.app, text="")
+        self.mode_label.pack(pady=10)
+
         self.ports_frame = tk.Frame(self.app)
         self.ports_frame.pack(pady=10)
+
+        gnss_frame = tk.Frame(self.app)
+        gnss_frame.pack(pady=10)
+
+        for gnss, var in self.gnss_types.items():
+            tk.Checkbutton(gnss_frame, text=gnss, variable=var).pack(side=tk.LEFT)
 
 
         launch_button = tk.Button(self.app, text="Lancer", command=self.launch_main)
