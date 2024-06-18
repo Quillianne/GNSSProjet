@@ -32,6 +32,7 @@ class NMEAGUI:
         self.baud_rates = [115200, 4800]
 
         # Lists to hold latitude and longitude values
+        self.altitudes = []
         self.latitudes = []
         self.longitudes = []
         self.x_coords = []
@@ -173,18 +174,20 @@ class NMEAGUI:
             lat_dir = getattr(msg, 'lat_dir', '')
             lon = getattr(msg, 'longitude', '')
             lon_dir = getattr(msg, 'lon_dir', '')
+            alt = getattr(msg, 'altitude', 'N/A')
             self.gga_vars['latitude'].set(self.format_lat_lon(lat, lat_dir))
             self.gga_vars['longitude'].set(self.format_lat_lon(lon, lon_dir))
             self.gga_vars['fix_quality'].set(getattr(msg, 'gps_qual', 'N/A'))
             self.gga_vars['num_sats'].set(getattr(msg, 'num_sats', 'N/A'))
             hdop = getattr(msg, 'horizontal_dil', 'N/A')
             self.gga_vars['hdop'].set(f"{hdop} ({self.get_dop_quality(hdop)})" if hdop != 'N/A' else 'N/A')
-            self.gga_vars['altitude'].set(f"{getattr(msg, 'altitude', 'N/A')} {getattr(msg, 'altitude_units', '')}")
+            self.gga_vars['altitude'].set(f"{alt} {getattr(msg, 'altitude_units', '')}")
             self.gga_vars['geo_sep'].set(f"{getattr(msg, 'geo_sep', 'N/A')} {getattr(msg, 'geo_sep_units', '')}")
 
             if lat and lon:
                 self.latitudes.append(float(lat))
                 self.longitudes.append(float(lon))
+                self.altitudes.append(float(alt))
                 x, y = self.transformer_to_lambert93.transform(lat, lon)
                 self.x_coords.append(x)
                 self.y_coords.append(y)
@@ -310,6 +313,7 @@ class NMEAGUI:
                 std_dev_x, std_dev_y = np.sqrt(eigenvalues)
 
                 x_mean, y_mean = self.transformer_to_lambert93.transform(lat_mean, lon_mean)
+                print("LAMBERT: ", x_mean, y_mean)
                 self.ax.scatter(x_mean, y_mean, color='red', label='Position Moyenne')
 
                 # Draw ellipse representing global standard deviation
